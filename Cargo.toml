@@ -1,0 +1,9 @@
+[package]
+name = "termtime"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+crossterm = "0.23.0"
+humantime = "2.1.0"
+rand = "0.8.5"
