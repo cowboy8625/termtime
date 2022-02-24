@@ -2,16 +2,18 @@ use humantime::format_duration;
 
 use clap::{crate_authors, crate_description, crate_name, crate_version, Arg, Command};
 use crossterm::{
-    cursor, event, execute, queue, style,
+    cursor,
+    event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
+    execute, queue, style,
     style::Stylize,
     terminal,
     terminal::{disable_raw_mode, enable_raw_mode},
-    Result,
 };
 use rand::{thread_rng, Rng};
 use std::io::{Stdout, Write};
 use std::time::{Duration, Instant};
 
+// TODO: Remove list and get list from figet font folder.
 const FONTS: [&str; 39] = [
     "ascii9",
     "ascii12",
@@ -107,18 +109,28 @@ trait StrTuple<T> {
 
 struct Flags {
     message: String,
+    algin_message: Alignment,
     font: usize,
-    fg: (u8, u8, u8),
-    bg: (u8, u8, u8),
+    width: u16,
+    fg: Option<(u8, u8, u8)>,
+    bg: Option<(u8, u8, u8)>,
 }
 
 impl Flags {
-    fn fg(&self) -> style::Color {
-        self.fg.into()
+    fn fg(&self) -> Option<style::Color> {
+        self.fg.map(Into::into)
     }
 
-    fn bg(&self) -> style::Color {
-        self.bg.into()
+    fn bg(&self) -> Option<style::Color> {
+        self.bg.map(Into::into)
+    }
+
+    fn algin_clock(&self) -> Alignment {
+        match self.algin_message {
+            Alignment::Top => Alignment::Center,
+            Alignment::Bottom => Alignment::Center,
+            Alignment::Center => Alignment::Top,
+        }
     }
 }
 
@@ -181,33 +193,31 @@ WARNING over rides -f flag",
     };
     Flags {
         message: matches.value_of("message").unwrap_or("").to_string(),
+        algin_message: match matches.value_of("algin_message").unwrap_or("") {
+            "center" => Alignment::Center,
+            "bottom" => Alignment::Bottom,
+            _ => Alignment::Top,
+        },
+        width: 50,
 
         font,
-        fg: matches
-            .value_of("foreground")
-            .unwrap_or("0,255,0")
-            .into_tuple(),
-        bg: matches
-            .value_of("background")
-            .unwrap_or("40,40,40")
-            .into_tuple(),
+        fg: matches.value_of("foreground").map(StrTuple::into_tuple),
+        bg: matches.value_of("background").map(StrTuple::into_tuple),
     }
 }
 
-fn figet_message(msg: &str, font: usize) -> String {
-    String::from_utf8(
+fn figet_message(msg: &str, flags: &Flags) -> Result<String, Box<dyn std::error::Error>> {
+    Ok(String::from_utf8(
         std::process::Command::new("figlet")
-            .args(&["-f", FONTS[font]])
-            // .args(&["-w", "100"])
+            .args(&["-f", FONTS[flags.font]])
+            .args(&["-w", flags.width.to_string().as_str()])
             // .arg("-t")
             .arg("-c")
             .arg("-n")
             .arg(msg)
-            .output()
-            .unwrap()
+            .output()?
             .stdout,
-    )
-    .unwrap()
+    )?)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -224,7 +234,7 @@ fn printer(
     message: &str,
     flags: &Flags,
     align: Alignment,
-) -> Result<()> {
+) -> Result<(), Box<dyn std::error::Error>> {
     let message = message
         .lines()
         .filter(|l| !l.chars().all(|c| c == ' '))
@@ -232,20 +242,29 @@ fn printer(
         .collect::<String>();
     let text_width = message.lines().map(|x| x.len()).max().unwrap_or(0) as u16;
     let text_height = message.lines().count() as u16;
+    let y = match align {
+        Alignment::Top => height / 3 - text_height,
+        Alignment::Center => height / 2 - text_height / 2,
+        Alignment::Bottom => height + text_height,
+    };
+
     for (i, line) in message.lines().enumerate() {
+        let line = match (flags.fg(), flags.bg()) {
+            (Some(fg), Some(bg)) => line.with(fg).on(bg),
+            (Some(fg), None) => line.with(fg),
+            (None, Some(bg)) => line.on(bg),
+            _ => crossterm::style::StyledContent::new(crossterm::style::ContentStyle::new(), line),
+        };
         queue!(
             stdout,
-            cursor::MoveTo(
-                (width / 2) - (text_width / 2),
-                (height / align as u16) - (text_height / 2) + i as u16
-            ),
-            style::Print(&format!("{:^1}", line.with(flags.fg()).on(flags.bg())))
+            cursor::MoveTo((width / 2) - (text_width / 2), y + i as u16),
+            style::Print(&line)
         )?;
     }
     Ok(())
 }
-fn clear(stdout: &mut Stdout) -> Result<()> {
-    queue!(stdout, terminal::Clear(terminal::ClearType::All),)
+fn clear(stdout: &mut Stdout) -> Result<(), Box<dyn std::error::Error>> {
+    Ok(queue!(stdout, terminal::Clear(terminal::ClearType::All),)?)
 }
 
 fn display(
@@ -254,51 +273,95 @@ fn display(
     height: u16,
     start: Instant,
     flags: &Flags,
-) -> Result<()> {
-    clear(stdout)?;
-    let message = figet_message(&flags.message, flags.font);
-    printer(stdout, width, height, &message, &flags, Alignment::Top)?;
-    // queue!(
-    //
-    //     stdout,
-    //     cursor::MoveTo((width / 2) - (message_len / 2), height / 3),
-    //     style::Print(&flags.message)
-    // )?;
+) -> Result<(), Box<dyn std::error::Error>> {
+    // clear(stdout)?;
+    let message = figet_message(&flags.message, &flags)?;
+    printer(stdout, width, height, &message, &flags, flags.algin_message)?;
     let time = format_duration(Duration::from_secs(start.elapsed().as_secs())).to_string();
-    let fig_string = figet_message(&time, flags.font);
+    let fig_string = figet_message(&time, &flags)?;
     printer(
         stdout,
         width,
         height,
         &fig_string,
         &flags,
-        Alignment::Center,
+        flags.algin_clock(),
     )?;
     stdout.flush()?;
     Ok(())
 }
 
-fn main() -> Result<()> {
-    let flags = args();
+fn events_system(
+    stdout: &mut Stdout,
+    width: &mut u16,
+    height: &mut u16,
+    running: &mut bool,
+    flags: &mut Flags,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if event::poll(Duration::from_secs(1))? {
+        let events = event::read()?;
+        match events {
+            Event::Key(key_event) => match key_event {
+                KeyEvent {
+                    code: KeyCode::Esc,
+                    modifiers: KeyModifiers::NONE,
+                } => {
+                    *running = false;
+                }
+                KeyEvent {
+                    code: KeyCode::Up,
+                    modifiers: KeyModifiers::NONE,
+                } => {
+                    flags.font = (flags.font + 1) % FONTS.len();
+                }
+                KeyEvent {
+                    code: KeyCode::Down,
+                    modifiers: KeyModifiers::NONE,
+                } => {
+                    flags.font = (flags.font - 1) % FONTS.len();
+                }
+                KeyEvent {
+                    code: KeyCode::Left,
+                    modifiers: KeyModifiers::NONE,
+                } => {
+                    flags.width = flags.width.saturating_sub(1);
+                }
+                KeyEvent {
+                    code: KeyCode::Right,
+                    modifiers: KeyModifiers::NONE,
+                } => {
+                    flags.width = flags.width.saturating_add(1);
+                }
+                _ => {}
+            },
+            Event::Resize(w, h) => {
+                *width = w;
+                *height = h;
+                clear(stdout)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut flags = args();
     enable_raw_mode()?;
     let mut stdout = std::io::stdout();
-    let (width, height) = terminal::size()?;
+    let (mut width, mut height) = terminal::size()?;
     execute!(&mut stdout, cursor::Hide, terminal::EnterAlternateScreen)?;
     let start = Instant::now();
     display(&mut stdout, width, height, start, &flags)?;
-    loop {
-        if event::poll(Duration::from_secs(1))? {
-            let events = event::read()?;
-            if matches!(
-                events,
-                event::Event::Key(event::KeyEvent {
-                    code: event::KeyCode::Esc,
-                    modifiers: event::KeyModifiers::NONE
-                })
-            ) {
-                break;
-            }
-        }
+    let mut running = true;
+    while running {
+        events_system(
+            &mut stdout,
+            &mut width,
+            &mut height,
+            &mut running,
+            &mut flags,
+        )?;
         display(&mut stdout, width, height, start, &flags)?;
     }
     execute!(&mut stdout, cursor::Show, terminal::LeaveAlternateScreen)?;
