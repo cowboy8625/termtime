@@ -7,7 +7,12 @@ Term Time
 <br>
 </h1>
 
-# Command line help
+
+### Install
+
+'cargo install --git https://github.com/cowboy8625/termtime`
+
+### Command line help
 ```
 OPTIONS:
     -a, --algin <USAGE:
@@ -29,7 +34,7 @@ OPTIONS:
     -V, --version                  Print version information
 ```
 
-# Dependence's
+### Dependence's
 
 - **Debian** 'sudo apt install figlet`
 
