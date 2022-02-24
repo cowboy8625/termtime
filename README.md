@@ -1,7 +1,11 @@
-<p align="center">
-<p>TermTime</p>
-![image](https://user-images.githubusercontent.com/43012445/155573341-57f366f7-8c50-4d96-a9f6-5da1893df444.png)
-</p>
+<h1 align="center">
+<br>
+<img src="https://user-images.githubusercontent.com/43012445/155573341-57f366f7-8c50-4d96-a9f6-5da1893df444.png" alt="GIF" width="800">
+<br>
+Term Time
+<br>
+<br>
+</h1>
 
 # Command line help
 ```
