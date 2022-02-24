@@ -111,7 +111,6 @@ struct Flags {
     message: String,
     algin_message: Alignment,
     font: usize,
-    width: u16,
     fg: Option<(u8, u8, u8)>,
     bg: Option<(u8, u8, u8)>,
 }
@@ -177,6 +176,19 @@ WARNING over rides -f flag",
                 )
                 .takes_value(false),
         )
+        .arg(
+            Arg::new("algin_message")
+                .short('a')
+                .long("algin")
+                .help(
+                    "Sets the Message
+    Option's
+        top,
+        center,
+        bottom",
+                )
+                .takes_value(true),
+        )
         .get_matches();
     let font = matches.value_of("font").unwrap_or("").to_string();
 
@@ -198,22 +210,24 @@ WARNING over rides -f flag",
             "bottom" => Alignment::Bottom,
             _ => Alignment::Top,
         },
-        width: 50,
-
         font,
         fg: matches.value_of("foreground").map(StrTuple::into_tuple),
         bg: matches.value_of("background").map(StrTuple::into_tuple),
     }
 }
 
-fn figet_message(msg: &str, flags: &Flags) -> Result<String, Box<dyn std::error::Error>> {
+fn figet_message(
+    msg: &str,
+    flags: &Flags,
+    width: u16,
+) -> Result<String, Box<dyn std::error::Error>> {
     Ok(String::from_utf8(
         std::process::Command::new("figlet")
             .args(&["-f", FONTS[flags.font]])
-            .args(&["-w", flags.width.to_string().as_str()])
+            .args(&["-w", width.to_string().as_str()])
             // .arg("-t")
             .arg("-c")
-            .arg("-n")
+            // .arg("-n")
             .arg(msg)
             .output()?
             .stdout,
@@ -227,25 +241,32 @@ enum Alignment {
     Bottom = 1,
 }
 
+fn rpad(msg: &str) -> String {
+    msg.lines()
+        .map(|line| format!("{}          \n", line))
+        .collect()
+}
+
+fn remove_empty_lines(msg: &str) -> String {
+    msg.lines()
+        .filter(|l| !l.chars().all(|c| c == ' '))
+        .map(|s| format!("{}\n", s))
+        .collect::<String>()
+}
+
 fn printer(
     stdout: &mut Stdout,
-    width: u16,
     height: u16,
     message: &str,
     flags: &Flags,
     align: Alignment,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let message = message
-        .lines()
-        .filter(|l| !l.chars().all(|c| c == ' '))
-        .map(|s| format!("{}\n", s))
-        .collect::<String>();
-    let text_width = message.lines().map(|x| x.len()).max().unwrap_or(0) as u16;
+    let message = rpad(&remove_empty_lines(message));
     let text_height = message.lines().count() as u16;
     let y = match align {
-        Alignment::Top => height / 3 - text_height,
+        Alignment::Top => 0,
         Alignment::Center => height / 2 - text_height / 2,
-        Alignment::Bottom => height + text_height,
+        Alignment::Bottom => height - text_height,
     };
 
     for (i, line) in message.lines().enumerate() {
@@ -255,11 +276,7 @@ fn printer(
             (None, Some(bg)) => line.on(bg),
             _ => crossterm::style::StyledContent::new(crossterm::style::ContentStyle::new(), line),
         };
-        queue!(
-            stdout,
-            cursor::MoveTo((width / 2) - (text_width / 2), y + i as u16),
-            style::Print(&line)
-        )?;
+        queue!(stdout, cursor::MoveTo(0, y + i as u16), style::Print(&line))?;
     }
     Ok(())
 }
@@ -275,18 +292,11 @@ fn display(
     flags: &Flags,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // clear(stdout)?;
-    let message = figet_message(&flags.message, &flags)?;
-    printer(stdout, width, height, &message, &flags, flags.algin_message)?;
+    let message = figet_message(&flags.message, &flags, width)?;
+    printer(stdout, height, &message, &flags, flags.algin_message)?;
     let time = format_duration(Duration::from_secs(start.elapsed().as_secs())).to_string();
-    let fig_string = figet_message(&time, &flags)?;
-    printer(
-        stdout,
-        width,
-        height,
-        &fig_string,
-        &flags,
-        flags.algin_clock(),
-    )?;
+    let fig_string = figet_message(&time, &flags, width)?;
+    printer(stdout, height, &fig_string, &flags, flags.algin_clock())?;
     stdout.flush()?;
     Ok(())
 }
@@ -319,18 +329,6 @@ fn events_system(
                     modifiers: KeyModifiers::NONE,
                 } => {
                     flags.font = (flags.font - 1) % FONTS.len();
-                }
-                KeyEvent {
-                    code: KeyCode::Left,
-                    modifiers: KeyModifiers::NONE,
-                } => {
-                    flags.width = flags.width.saturating_sub(1);
-                }
-                KeyEvent {
-                    code: KeyCode::Right,
-                    modifiers: KeyModifiers::NONE,
-                } => {
-                    flags.width = flags.width.saturating_add(1);
                 }
                 _ => {}
             },
